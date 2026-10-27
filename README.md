@@ -1,89 +1,106 @@
+# CDF hosted MQTT broker
 
-> [!IMPORTANT]
-> **Using this template — delete this section after you clone it into your pattern.**
->
-> This repository is a starting point, not a finished pattern. Create your own repo from it, then remove this highlighted block before you fill in the pattern below.
->
-> 1. Click **Use this template** (or clone) and name the new repository `psp-<kebab-name>`.
-> 2. Fill in `psp.json`: `name`, `description`, `type`, and `tags`.
->    - **type** — exactly one of: `notebook`, `toolkit-module`, `guide`, `flows-app`, `bundle`
->    - **tags** — a few short keywords, for example: `mqtt`, `contextualization`, `historian`, `extraction`, `data-modeling`
-> 3. Replace the placeholders and HTML comments in this README with your pattern’s content. The pattern README starts at `# <Pattern name>`.
-> 4. Replace `psp_icon.svg` using the icon guidelines in the maintainer notes at the bottom.
-> 5. Delete this highlighted section. Also delete the maintainer notes (`<details>` at the bottom) before you publish.
-
-> Use Icon Guidelines in bottom to generate SVG for this Solution Pattern. 
-
-# <Pattern name>
-
-<!-- One or two sentences. Same text as `description` in pattern.json. -->
+Ingest live sensor datapoints into CDF data modeling time series through the CDF-hosted MQTT broker.
 
 ## What it does
 
-<!-- 3–6 sentences. The problem this pattern addresses and what you end up with after using it.
-     Write for a partner engineer who has never seen this before. -->
+Cognite hosts the MQTT broker and the extractor. You create four CDF resources — source, destination, mapping, and job — and publish Cognite-format JSON over MQTT. Datapoints land on data modeling `CogniteTimeSeries` instances identified by `(space, externalId)`.
 
+```
+mqtt_publisher.py
+  │  publishes Cognite-format JSON over MQTT (TLS)
+  ▼
+CDF MQTT broker  ← Source (CDF hosts the broker)
+  │
+  │  Job subscribes to the topic and applies a Kuiper mapping
+  ▼
+CDF destination
+  │
+  └─► DM time series  instance_id = (mqtt_demo, mqtt_demo_ts_000000)
+         auto-created on the first datapoint
+```
+
+| Resource        | Role                                                                 |
+| --------------- | -------------------------------------------------------------------- |
+| **Source**      | MQTT broker connection. CDF provisions it and returns credentials.   |
+| **Destination** | Where the extractor writes data, authenticated with a session nonce. |
+| **Mapping**     | Kuiper expression: MQTT JSON → CDF datapoint outputs.                |
+| **Job**         | Links source → destination. Sets the topic filter and the mapping.   |
+
+The notebook is safe to re-run: it updates those resources instead of duplicating them. The publisher simulates any number of series at a chosen rate. External IDs are `mqtt_demo_ts_000000` onward, in the `mqtt_demo` space.
 
 ## Prerequisites
 
-<!-- Everything needed before starting. Delete lines that do not apply. -->
-
-- CDF project with: <capabilities / data models / data sets>
-- Quick Start Dataset
+- Python 3.14 or newer, and [uv](https://docs.astral.sh/uv/)
+- A CDF project, and an identity with `hostedExtractors:READ` and `hostedExtractors:WRITE`
 
 ## How to use
 
-<!-- Numbered, copy-pasteable. Start from "download or clone this repo".
-     For toolkit-module: where to place the module and the deploy commands.
-     For notebook: how to configure the client and which cells to edit.
-     For guide: how to read it / where to start. -->
+1. Clone this repo and open it.
+2. Install dependencies, including the notebook kernel:
 
-1. Download the ZIP or `git clone <repo-url>`
-2.
-3.
+   ```bash
+   uv sync
+   ```
+
+3. Copy `.env.example` to `.env` and fill in your CDF project values. See [Configuration](#configuration).
+
+   ```bash
+   cp .env.example .env
+   ```
+
+4. Open `mqtt_demo/mqtt_extractor_setup.ipynb`, select the `.venv` kernel, and run all cells from the top through **Step 10**. Re-running is safe. The source cell writes `MQTT_HOST`, `MQTT_USERNAME`, and `MQTT_PASSWORD` into `.env`. The password is returned only when the source is created.
+5. Publish simulated data from the repo root:
+
+   ```bash
+   uv run python mqtt_demo/mqtt_publisher.py 10 1hz
+   uv run python mqtt_demo/mqtt_publisher.py 10 10hz
+   uv run python mqtt_demo/mqtt_publisher.py 1000 1hz
+   ```
+
+   Frequency can be `1hz`, `0.5hz`, `10hz`, or an interval such as `2s`.
+
+6. Confirm the pipeline, then stop the publisher with Ctrl-C when you are done.
+
+   | Where                                        | What to look for                          |
+   | -------------------------------------------- | ----------------------------------------- |
+   | **Data management → Integrate → Extractors** | `mqtt_demo_source` — status **Connected** |
+   | **Data → Time series** (space `mqtt_demo`)   | `mqtt_demo_ts_*` nodes updating live      |
+
+   The notebook's monitor cell checks job status and throughput while the publisher is running.
+
+7. Run the **Teardown** cell at the bottom of the notebook to delete the hosted extractor resources, the `mqtt_demo_ts_*` time series nodes, and the `mqtt_demo` space. Teardown removes the `MQTT_*` keys from `.env` and leaves the CDF login settings in place.
+
+To write into a different space, change `SPACE` in `helpers/constants.py` before you run the notebook.
 
 ## Configuration
 
-<!-- Variables, config files, environment values a partner must change. Delete if none. -->
+Copy `.env.example` to `.env` and fill in the values:
 
-| Setting | Where | Description |
-|---|---|---|
-|Env Variable | .env | Add CDF Project Variables.  |
+```bash
+cp .env.example .env
+```
+
+| Setting             | Where                  | Description                                                                                                    |
+| ------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `CDF_CLUSTER`       | `.env`                 | Cluster hostname prefix, for example `westeurope-1`. The client calls `https://<CDF_CLUSTER>.cognitedata.com`. |
+| `CDF_PROJECT`       | `.env`                 | CDF project name.                                                                                              |
+| `IDP_CLIENT_ID`     | `.env`                 | Entra ID app registration used to sign in.                                                                     |
+| `IDP_TENANT_ID`     | `.env`                 | Entra ID tenant.                                                                                               |
+| `IDP_CLIENT_SECRET` | `.env`                 | Required when `LOGIN_FLOW=client_credentials`.                                                                 |
+| `LOGIN_FLOW`        | `.env`                 | `client_credentials` (default) or `interactive` for browser login.                                             |
+| `MQTT_HOST`         | `.env`                 | Broker hostname. Written by the notebook when the source is created.                                           |
+| `MQTT_PORT`         | `.env`                 | Broker port. Defaults to `8883`.                                                                               |
+| `MQTT_USERNAME`     | `.env`                 | MQTT username generated by CDF.                                                                                |
+| `MQTT_PASSWORD`     | `.env`                 | MQTT password generated by CDF. Returned only on first creation.                                               |
+| `SPACE`             | `helpers/constants.py` | Data modeling space for the time series. Default `mqtt_demo`.                                                  |
+| `MQTT_TOPIC`        | notebook, Step 2       | Topic the publisher uses and the job subscribes to. Default `cdf/data`.                                        |
+
+`get_client()` reads `.env` once per kernel process. Restart the kernel after you edit `.env`.
 
 ## Known limitations
 
-<!-- Be direct. What this does not handle, scale limits, versions not tested. -->
-
--
-
-
-
-
-<details>
-<summary>Maintainer notes – delete this section before publishing</summary>
-
-### Publishing checklist
-
-- [ ] `pattern.json` filled in (`name`, `description`, `type`, `tags`, `icon`)
-- [ ] `icon.svg` replaced following the icon guidelines below
-- [ ] All `<placeholders>` and HTML comments in this README replaced or removed
-- [ ] No credentials, tokens, customer names or customer data anywhere in the repo
-- [ ] `LICENSE` (Apache-2.0) present and unchanged
-- [ ] Repo name follows `psp-<kebab-name>`
-- [ ] Repo description set (same as `description`)
-- [ ] Topic `partner-solution-pattern` added — this is what publishes the pattern
-
-### Icon guidelines
-
-Edit the provided `icon.svg`; keep the frame, change only the motif.
-
-- **Canvas:** `viewBox="0 0 256 256"`, background `<rect>` with `rx="48"` and the existing gradient. Never change the background.
-- **Safe area:** keep all motif shapes inside x/y 40–216. Nothing touches the edge.
-- **Palette:** exactly three colors — primary `#4A7BF7`, accent `#7FD1B9`, background gradient. Use opacity `1`, `0.75`, `0.5` on the primary for depth. No other colors, no extra gradients.
-- **Motif:** one idea, 2–5 shapes. Show what the pattern *does* (flow, sync, transform, monitor, model…), not what it is built with. No logos, no tool icons, no text.
-- **Strokes:** `stroke-width` 6 for main lines, 4 for secondary; `stroke-linecap="round"`, `stroke-linejoin="round"`. Corner radius 6–14 on rectangles.
-- **Accent use:** the accent color marks the "action" element (arrow, highlight, new item). Everything static uses the primary.
-- **Test:** it must read clearly at 48×48. If you have to squint, remove shapes.
-- **File:** plain SVG, no raster, no external references, no `<script>`, under 3 KB.
-
-</details>
+- The CDF-hosted MQTT broker source (`mqtt_broker`) is a beta API. The notebook calls it with `cdf-version: beta`. The Python SDK's MQTT source types are for a broker you host yourself, so they are not used here.
+- The broker password is returned only when the source is created. If `.env` loses the `MQTT_*` keys, run Teardown and create the source again.
+- Datapoints are written to data modeling time series only.
+- The publisher uses QoS 0 and sends at most 1 000 time series per message, so a high-rate test does not queue payloads in memory.

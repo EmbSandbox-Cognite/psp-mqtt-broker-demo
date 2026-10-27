@@ -1,6 +1,6 @@
 {
-    "name": "<Pattern name>",
-    "description": "<One or two sentences. Short description of the pattern>",
-    "type": "notebook",
-    "tags": ["tags", "noteboks", "mqtt"]
-  }
+  "name": "CDF hosted MQTT broker",
+  "description": "Ingest live sensor datapoints into CDF data modeling time series through the CDF-hosted MQTT broker.",
+  "type": "notebook",
+  "tags": ["mqtt", "hosted-extractor", "time-series", "extraction"]
+}
